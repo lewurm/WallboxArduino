@@ -33,6 +33,11 @@
  *       - to improve the latency, changed the main loop delay from 100ms to (20-12)ms. This leads to cycle time of 20ms.
  *  * 2022-08-12 Uwe:
  *       - Poti selects between 5% (left side) and adjustable (right side), and PWM is updated live
+ *  * 2024-03-20 lewurm:
+ *       - Start porting it to Arduino Uno R4 WiFi.
+ *       - Use LED Matrix instead of dedicated LED strip.
+ *       - Hardcode PWM to be set to 5% instead of using a Poti to configure it.  It will only be used to initiate DC operation.
+ *       - Use PWM lib to setup instead of chip specific registers.
  *       
  * Todos:
  *    - Temperaturmessung, Abschaltung oder Ladestromreduzierung bei hoher Temperatur
@@ -42,45 +47,47 @@
  */
 
 /*******************************************************************************/
-/* LED-Streifen mit WS2812 */
-#include <FastLED.h>
-// How many leds are in the strip?
-#define NUM_LEDS 6
-// Data pin that led data will be written out over
-#define DATA_PIN 11
-// This is an array of leds.  One item for each led in your strip.
-CRGB leds[NUM_LEDS];
+#include "Arduino_LED_Matrix.h"
+ArduinoLEDMatrix matrix;
 
+
+byte frame[8][12] = {
+  { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+  { 0, 1, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0 },
+  { 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0 },
+  { 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0 },
+  { 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0 },
+  { 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0 },
+  { 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0 },
+  { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+};
 
 void setLedStrip(uint32_t x) {
- uint8_t i;
- for(i = 0; i < NUM_LEDS; i++) {
-      leds[i] = x;
- }
- // Show the leds
- FastLED.show();
+  int i = 0;
+  for (; i < x && i < 8; i++) {
+    for (int y = 0; y < 12; y++) {
+      frame[i][y] = 1;
+    }
+  }
+  for (int j = i; j < 8; j++) {
+    for (int y = 0; y < 12; y++) {
+      frame[j][y] = 0;
+    }
+  }
+  matrix.renderBitmap(frame, 8, 12);
 }
 
 /***********************************************************************************/
 /* global variables and definitions */
  
 #define VOLT_PIN 1 // ControlPilot analog voltage reading pin A1
-#define POTI_PIN 2 /* Poti at A2 */
-#define RED_LED_PIN 5 // Digital pin
 #define CHARGING_PIN 8 // digital Charging LED and Relay Trigger pin
-#define PILOT_PIN 10 // n.b. PILOT_PIN *MUST* be digital 10 because SetPWM() assumes it
-//#define GREEN_LED_PIN 13 // Digital pin
+#define PILOT_PIN D10 // n.b. PILOT_PIN *MUST* be digital 10 because SetPWMForDigitalComm() assumes it
+#include "pwm.h"
+PwmOut pwm(D10);
 #define DEBUG_PIN 6 /* for debugging */
 
 
-int8_t I_Lade_Soll_A = 0;
-int8_t I_Lade_SollAlt_A = -2;
-
-//int8_t globalAmps = 0;
-uint16_t nAdcPoti;
-
-
-#define PWM_FIVE_PERCENT (256/20); /* 5% of full range. */
 #define MAIN_LOOP_CYCLE_TIME_MS 20 /* 20 milliseconds main loop cycle time */
 
 /**********************************************************************************/
@@ -90,8 +97,6 @@ typedef enum {
   PILOT_STATE_P12,PILOT_STATE_PWM,PILOT_STATE_N12} 
 PILOT_STATE;
 class J1772Pilot {
-  uint8_t m_bit;
-  uint8_t m_port;
   PILOT_STATE m_State;
 public:
   J1772Pilot() {
@@ -101,13 +106,11 @@ public:
   PILOT_STATE GetState() { 
     return m_State; 
   }
-  int SetPWM(int amps); // 12V 1KHz PWM
+  int SetPWMForDigitalComm(); // 12V 1KHz PWM
 };
 
 J1772Pilot m_Pilot;
 uint8_t pilotVoltageRange;
-
-
 
 
 int16_t uPilotHigh_mV;
@@ -170,96 +173,31 @@ void printPilotRange(uint8_t r) {
 
 void J1772Pilot::Init()
 {
+  /* TODO: is this needed or taken care of by the PWM lib? */
   pinMode(PILOT_PIN,OUTPUT);
-  m_bit = digitalPinToBitMask(PILOT_PIN);
-  m_port = digitalPinToPort(PILOT_PIN);
 
+  pwm.begin(1000.0f /*Hz*/, 100.0f /*%*/);
+ 
   SetState(PILOT_STATE_P12); // turns the pilot on 12V steady state
 }
 
 
 // no PWM pilot signal - steady state
 // PILOT_STATE_P12 = steady +12V (EVSE_STATE_A - VEHICLE NOT CONNECTED)
+// PILOT_STATE_PWM = 5% duty cycle
 // PILOT_STATE_N12 = steady -12V (EVSE_STATE_F - FAULT) 
-void J1772Pilot::SetState(PILOT_STATE state)
-{
-  volatile uint8_t *out = portOutputRegister(m_port);
-
-  uint8_t oldSREG = SREG;
-  cli();
-  /* prepare the timer, so it runs already in the background. When switching to PWM later, we get immediate the correct
-   *  timing.
-   */
-  TCCR1A = _BV(COM1A0) | _BV(COM1B1) | _BV(WGM11) | _BV(WGM10);
-  TCCR1B = _BV(WGM13) | _BV(WGM12) | _BV(CS11) | _BV(CS10);
-  OCR1A = 249;
-  OCR1B = 124; /* 50%, does not matter, it will be overwritten anyway when turning the PWM on. */
-    
-  //TCCR1A = 0; //disable pwm by turning off COM1A1,COM1A0,COM1B1,COM1B0
-  TCCR1A = 3; //disable pwm by turning off COM1A1,COM1A0,COM1B1,COM1B0, but keep the WGM11 and WGM10 on, so that the timer still 
-              // runs in the background.
+void J1772Pilot::SetState(PILOT_STATE state) {
+  /* uno r4 wifi */
   if (state == PILOT_STATE_P12) {
-    *out |= m_bit;  // set pin high
+    pwm.pulse_perc(100.0);
+  } else if (state == PILOT_STATE_PWM) {
+    pwm.pulse_perc(5.0);
+  } else {
+    pwm.pulse_perc(0.0);
   }
-  else {
-    *out &= ~m_bit;  // set pin low
-  }
-  SREG = oldSREG;
   isPwmOn = 0;
   m_State = state;
 }
-
-
-// set EVSE current capacity in Amperes
-// duty cycle 
-// outputting a 1KHz square wave to digital pin 10 via Timer 1
-//
-int J1772Pilot::SetPWM(int amps)
-{
-  uint8_t ocr1b = 0;
-  isPwmOn=1;
-  
-  if ((amps >= 6) && (amps <= 51)) {
-    ocr1b = 25 * amps / 6 - 1;  // J1772 states "Available current = (duty cycle %) X 0.6"
-  } else if ((amps > 51) && (amps <= 80)) {
-     ocr1b = amps + 159;  // J1772 states "Available current = (duty cycle % - 64) X 2.5"
-  } else if (amps == -1) {
-   /* requested 5% PWM to initiate digital communication */
-    ocr1b = PWM_FIVE_PERCENT; /* 256/20 */
-  } else {
-    return 1; // error
-  }
-
-  if (ocr1b) {
-    // Timer1 initialization:
-    // 16MHz / 64 / (OCR1A+1) / 2 on digital 9
-    // 16MHz / 64 / (OCR1A+1) on digital 10
-    // 1KHz variable duty cycle on digital 10, 500Hz fixed 50% on digital 9
-    // pin 10 duty cycle = (OCR1B+1)/(OCR1A+1)
-    uint8_t oldSREG = SREG;
-    cli();
-
-    TCCR1A = _BV(COM1A0) | _BV(COM1B1) | _BV(WGM11) | _BV(WGM10);
-    TCCR1B = _BV(WGM13) | _BV(WGM12) | _BV(CS11) | _BV(CS10);
-    OCR1A = 249;
-
-    // 10% = 24 , 96% = 239
-    OCR1B = ocr1b;
-    TCNT1 =0; /* start the counter from the beginning, so we get a full first PWM cycle */
-
-    SREG = oldSREG;
-
-    m_State = PILOT_STATE_PWM;
-    return 0;
-  }
-  else { // !duty
-    // invalid amps
-    return 1;
-  }
-
-}
-
-
 
 void printPilotVoltages(void) {
   Serial.print(F("Pilot Voltages high="));
@@ -267,41 +205,6 @@ void printPilotVoltages(void) {
   Serial.print("  low=");
   Serial.println(  uPilotLow_mV);
 }
-
-
-void selftest(void) {
-  uint8_t r;
-  //digitalWrite(GREEN_LED_PIN,HIGH);
-  //delay(1000);
-  //digitalWrite(GREEN_LED_PIN,LOW);
-  //digitalWrite(CHARGING_PIN,HIGH);
-  //delay(300);
-  //digitalWrite(CHARGING_PIN,LOW);
-  //digitalWrite(RED_LED_PIN,HIGH);
-  //delay(300);
-  //digitalWrite(RED_LED_PIN,LOW);
-  //Serial.println("Setting pilot to 12V");
-  //m_Pilot.SetState(PILOT_STATE_P12);
-  //delay(100);
-  //readPilotVoltages();
-  //printPilotVoltages();
-  //delay(300);
-  //Serial.println("Setting pilot to -12V");
-  //m_Pilot.SetState(PILOT_STATE_N12);
-  //delay(100);
-  //readPilotVoltages();
-  //printPilotVoltages();
-  delay(1000);
-  Serial.println("Setting pilot to PWM");
-  m_Pilot.SetPWM(I_Lade_Soll_A);
-  delay(100);
-  readPilotVoltages();
-  //printPilotVoltages();
-  r=convertPilotVoltageToRange();
-  //printPilotRange(r);
-
-}
-
 
 /*********************************************************************************************************/
 /* Wallbox State Machine */
@@ -317,7 +220,6 @@ void selftest(void) {
 #define WB_STATE_B 2 /* vehicle detected */
 #define WB_STATE_C 3 /* ready/charging */
 #define WB_STATE_ERR 4 /* error */
-
 
 uint8_t wallbox_state = WB_STATE_UNDEFINED;
 uint16_t tTransitionDebounce_A_B;
@@ -376,58 +278,37 @@ void resetAllTimers(void) {
   tTransitionDebounce_ERR_A=0;
 }
 
-
 void enterState_A(void) {
-  /* Standby */
   Serial.println("Entering State STANDBY");
-  #ifdef GREEN_LED_PIN
-    digitalWrite(GREEN_LED_PIN,HIGH); /* Grün */
-  #endif  
   digitalWrite(CHARGING_PIN,LOW);  
-  digitalWrite(RED_LED_PIN,LOW); 
-  setLedStrip(0x002000); /* GRÜN, aber nicht zu hell */
+  setLedStrip(1); /* GRÜN, aber nicht zu hell */
   m_Pilot.SetState(PILOT_STATE_P12);  /* +12V */
   resetAllTimers();
   wallbox_state = WB_STATE_A;
 }
 
 void enterState_B(void) {
-  /* vehicle detected */
   Serial.println("Entering State VEHICLE DETECTED");
-  #ifdef GREEN_LED_PIN
-    digitalWrite(GREEN_LED_PIN,HIGH); /* Grün */
-  #endif  
   digitalWrite(CHARGING_PIN,LOW);  
-  digitalWrite(RED_LED_PIN,HIGH); /* plus ROT  ergibt GELB */ 
-  setLedStrip(0x404000); /* GELB */
-  m_Pilot.SetPWM(I_Lade_Soll_A);  /* PWM */  
+  setLedStrip(2); /* GELB */
+  m_Pilot.SetState(PILOT_STATE_PWM);  
   resetAllTimers();
   wallbox_state = WB_STATE_B;
 }
 
 void enterState_C(void) {
-  /* ready/charging */
   Serial.println("Entering State READY/CHARGING");
-  #ifdef GREEN_LED_PIN
-    digitalWrite(GREEN_LED_PIN,LOW);
-  #endif
   digitalWrite(CHARGING_PIN,HIGH);   /* Relais-EIN und BLAU */ 
-  digitalWrite(RED_LED_PIN,LOW); 
-  setLedStrip(0x000040); /* BLAU */
-  m_Pilot.SetPWM(I_Lade_Soll_A);  /* PWM */  
+  setLedStrip(3); /* BLAU */
+  m_Pilot.SetState(PILOT_STATE_PWM);  
   resetAllTimers();
   wallbox_state = WB_STATE_C;
 }
 
 void enterState_ERR(void) {
-  /* error */
   Serial.println("Entering State ERROR");
-  #ifdef GREEN_LED_PIN
-    digitalWrite(GREEN_LED_PIN,LOW);
-  #endif  
   digitalWrite(CHARGING_PIN,LOW);
-  digitalWrite(RED_LED_PIN,HIGH); 
-  setLedStrip(0x400000); /* ROT */
+  setLedStrip(4); /* ROT */
   /* Wir könnten hier mit -12V dem Fahrzeug einen Fehler signalisieren. Aber um es nicht
    *  zu sehr zu verwirren, schalten wir mit konstant +12V die Ladung ab, damit sollte ein stabiler und sicherer
    *  Zustand erreicht sein.
@@ -442,11 +323,10 @@ void runWbStateMachine(void) {
   readPilotVoltages();
   printModulo++;
   pilotVoltageRange = convertPilotVoltageToRange();
-  if ((printModulo % 32)==0) {
+  if ((printModulo % (32*8))==0) {
      printPilotVoltages();
      printPilotRange(pilotVoltageRange);
-     Serial.print("I_Ladee_Soll_A");
-     Serial.println(I_Lade_Soll_A);
+     Serial.println("");
   }
   switch (wallbox_state) {
    case WB_STATE_A: /* standby */
@@ -473,62 +353,39 @@ void runWbStateMachine(void) {
      enterState_A(); /* Beim Init und falls der Zustand seltsame Werte hat */
   }
   delay(MAIN_LOOP_CYCLE_TIME_MS-12); /* 12 ms are needed for the ADC-multi-read-loop */
-  
 }
 
-
 /*********************************************************************************************************/
-
 
 void setup() {
   Serial.begin(115200);
   Serial.println(F("Starte..."));
-  pinMode(CHARGING_PIN,OUTPUT);
+  matrix.begin();
+
+  pinMode(CHARGING_PIN, OUTPUT);
   pinMode(DEBUG_PIN, OUTPUT);
-  #ifdef GREEN_LED_PIN
-    pinMode (GREEN_LED_PIN, OUTPUT);
-    digitalWrite(GREEN_LED_PIN,LOW);
-  #endif  
-  pinMode (RED_LED_PIN, OUTPUT);
-  digitalWrite(RED_LED_PIN,LOW);
-  digitalWrite(CHARGING_PIN,LOW);
-  FastLED.addLeds<WS2811, DATA_PIN, RGB>(leds, NUM_LEDS);
+  digitalWrite(CHARGING_PIN, LOW);
   m_Pilot.Init(); // init the pilot
-  /*
-  setLedStrip(0xFF0000);
-  delay(1000);
-  setLedStrip(0x00FF00);
-  delay(1000);
-  setLedStrip(0x0000FF);
-  delay(1000);
-  */
-  setLedStrip(0x000000);
-  
+
+  /* bootup animation */
+  for (int i = 0; i < 10; i++) {
+    setLedStrip(8);
+    delay(60);
+    setLedStrip(7);
+    delay(60);
+    setLedStrip(6);
+    delay(60);
+  }
 }
 
-void readPoti(void) {
-  uint16_t deltaI;
-  nAdcPoti = analogRead(POTI_PIN);
-  //globalTest = nAdcPoti / 4 / 5;
-  if (nAdcPoti<512) {
-    /* left side -> digital communication, 5% PWM */
-    I_Lade_Soll_A = -1;
-  } else {  
-    deltaI = nAdcPoti-512; /* right side of poti, scaled 0 to 511 */
-    deltaI/=51; /* right side of poti, scaled 0 to 10 */
-    I_Lade_Soll_A = 5 + deltaI; /* minimum value 5A, maximum 15A */
-  }
-  if (I_Lade_Soll_A != I_Lade_SollAlt_A) {
-    I_Lade_SollAlt_A = I_Lade_Soll_A;
-    if ((wallbox_state == WB_STATE_B) || (wallbox_state == WB_STATE_C)) {
-      m_Pilot.SetPWM(I_Lade_Soll_A);  /* live update of PWM */
-    }
-
+void updatePWM(void) {
+  /* hardcode to 5% PWM signal */
+  if ((wallbox_state == WB_STATE_B) || (wallbox_state == WB_STATE_C)) {
+    m_Pilot.SetState(PILOT_STATE_PWM);  /* live update of PWM */
   }
 }
 
 void loop() {
-  //selftest();
   runWbStateMachine();
-  readPoti();
+  updatePWM();
 }
