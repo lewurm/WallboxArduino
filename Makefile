@@ -2,9 +2,9 @@ PROJECT:=WallboxArduino
 FQBN:=arduino:renesas_uno:unor4wifi
 TTYDEV:=/dev/ttyACM0
 
-.PHONY: compile upload tty
+.PHONY: compile upload serial
 
-all: compile upload tty
+all: compile upload serial
 
 compile:
 	arduino-cli --log compile --fqbn $(FQBN) $(PWD)/$(PROJECT).ino
