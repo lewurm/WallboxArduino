@@ -117,7 +117,7 @@ int16_t uPilotHigh_mV;
 int16_t uPilotLow_mV;
 uint8_t isPwmOn=0;
 
-void readPilotVoltages(void) {
+void readPilotVoltages(bool printThisRound) {
  int16_t reading;
  uPilotLow_mV = 32000;
  uPilotHigh_mV = -32000;
@@ -125,8 +125,21 @@ void readPilotVoltages(void) {
  // 1x = 114us 20x = 2.3ms 100x = 11.3ms
  for (int i=0;i < 100;i++) {
     reading = analogRead(VOLT_PIN);  // measures pilot voltage
-    reading -= 561; /* entspricht 0V am ControlPilot */
-    reading *= 34; /* auf Millivolt skalieren */
+    if (i == 10 && printThisRound) {
+      Serial.print("  reading(");
+      Serial.print(i);
+      Serial.print(")=");
+      Serial.println(  reading);
+    }
+    /* tuned for:
+        CP       v
+      55.5kΩ     |
+     VOLT_PIN    v
+      23.6kΩ     |
+       GND       v
+    */
+    reading -= 23; /* entspricht 0V am ControlPilot */
+    reading *= 15; /* auf Millivolt skalieren */
     if (reading > uPilotHigh_mV) {
         uPilotHigh_mV = reading;
       }
@@ -320,10 +333,11 @@ void enterState_ERR(void) {
 
 
 void runWbStateMachine(void) {
-  readPilotVoltages();
   printModulo++;
+  bool printThisRound = (printModulo % (32*8))==0;
+  readPilotVoltages(printThisRound);
   pilotVoltageRange = convertPilotVoltageToRange();
-  if ((printModulo % (32*8))==0) {
+  if (printThisRound) {
      printPilotVoltages();
      printPilotRange(pilotVoltageRange);
      Serial.println("");
