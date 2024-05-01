@@ -140,9 +140,13 @@ void readPilotVoltages(bool printThisRound) {
     }
     /* tuned for:
         CP       v
-      55.5kΩ     |
-     VOLT_PIN    v
-      23.6kΩ     |
+                 |
+       200kΩ     |
+                 |
+     VOLT_PIN    +--- 56kΩ >---> 5V
+                 |
+       100kΩ     |
+                 |
        GND       v
     */
     reading -= 472; /* entspricht 0V am ControlPilot */
@@ -194,7 +198,7 @@ void printPilotRange(uint8_t r) {
 void J1772Pilot::Init()
 {
   /* TODO: is this needed or taken care of by the PWM lib? */
-  pinMode(PILOT_PIN,OUTPUT);
+  pinMode(PILOT_PIN, OUTPUT);
 
   pwm.begin(1000.0f /*Hz*/, 100.0f /*%*/);
  
