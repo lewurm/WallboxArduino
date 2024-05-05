@@ -130,6 +130,13 @@ void readPilotVoltages(bool printThisRound) {
       Serial.print(i);
       Serial.print(")=");
       Serial.println(  reading);
+
+      // 472 -> 0V
+      // 632 -> 5.43V
+      // 691 -> 7.23V
+      // 743 -> 9V
+      // 790 -> nix (11.08V?)
+      // 853 -> 13.38V
     }
     /* tuned for:
         CP       v
@@ -138,8 +145,8 @@ void readPilotVoltages(bool printThisRound) {
       23.6kΩ     |
        GND       v
     */
-    reading -= 23; /* entspricht 0V am ControlPilot */
-    reading *= 15; /* auf Millivolt skalieren */
+    reading -= 472; /* entspricht 0V am ControlPilot */
+    reading *= 33; /* auf Millivolt skalieren */
     if (reading > uPilotHigh_mV) {
         uPilotHigh_mV = reading;
       }
