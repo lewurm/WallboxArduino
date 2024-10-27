@@ -123,6 +123,9 @@ void readPilotVoltages(bool printThisRound) {
  uPilotHigh_mV = -32000;
  digitalWrite(DEBUG_PIN,HIGH);
  // 1x = 114us 20x = 2.3ms 100x = 11.3ms
+
+ // TODO: tweak measurement loops?
+
  for (int i=0;i < 100;i++) {
     reading = analogRead(VOLT_PIN);  // measures pilot voltage
     if (i == 10 && printThisRound) {
@@ -130,6 +133,8 @@ void readPilotVoltages(bool printThisRound) {
       Serial.print(i);
       Serial.print(")=");
       Serial.println(  reading);
+
+      // TODO: measure -12V (!), 0V, 3V, 6V, 9V and +12V
 
       // 472 -> 0V
       // 632 -> 5.43V
@@ -175,8 +180,12 @@ uint8_t convertPilotVoltageToRange(void) {
     rc= PILOT_RANGE_A; /* 12V, not connected */
   } else if ((uPilotHigh_mV>=7000) and (uPilotHigh_mV<=10500)) {
     rc= PILOT_RANGE_B; /* 9V, vehicle detected */
+
+    // TODO: verify, uPilotLow_mV should be -12V
   } else if ((uPilotHigh_mV>=4000) and (uPilotHigh_mV<=7500)) {
     rc= PILOT_RANGE_C; /* 6V, ready, charging */
+
+    // TODO: verify, uPilotLow_mV should be -12V
   } else {
     rc= PILOT_RANGE_ERROR; /* Defekt */
   }
