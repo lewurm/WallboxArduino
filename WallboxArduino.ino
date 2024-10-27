@@ -303,7 +303,7 @@ void resetAllTimers(void) {
 }
 
 void enterState_A(void) {
-  Serial.println("Entering State STANDBY");
+  Serial.println("Entering State STANDBY, State A");
   digitalWrite(CHARGING_PIN,LOW);  
   setLedStrip(1); /* GRÜN, aber nicht zu hell */
   m_Pilot.SetState(PILOT_STATE_P12);  /* +12V */
@@ -312,7 +312,7 @@ void enterState_A(void) {
 }
 
 void enterState_B(void) {
-  Serial.println("Entering State VEHICLE DETECTED");
+  Serial.println("Entering State VEHICLE DETECTED, State B");
   digitalWrite(CHARGING_PIN,LOW);  
   setLedStrip(2); /* GELB */
   m_Pilot.SetState(PILOT_STATE_PWM);  
@@ -321,7 +321,7 @@ void enterState_B(void) {
 }
 
 void enterState_C(void) {
-  Serial.println("Entering State READY/CHARGING");
+  Serial.println("Entering State READY/CHARGING, State C");
   digitalWrite(CHARGING_PIN,HIGH);   /* Relais-EIN und BLAU */ 
   setLedStrip(3); /* BLAU */
   m_Pilot.SetState(PILOT_STATE_PWM);  
@@ -337,7 +337,13 @@ void enterState_ERR(void) {
    *  zu sehr zu verwirren, schalten wir mit konstant +12V die Ladung ab, damit sollte ein stabiler und sicherer
    *  Zustand erreicht sein.
    */
+
+#if 1
   m_Pilot.SetState(PILOT_STATE_P12);  /* +12V */
+#else
+  /* HACK because voltage drops significantly :-/ */
+  m_Pilot.SetState(PILOT_STATE_PWM);  
+#endif
   resetAllTimers();
   wallbox_state = WB_STATE_ERR;
 }
@@ -345,7 +351,7 @@ void enterState_ERR(void) {
 
 void runWbStateMachine(void) {
   printModulo++;
-  bool printThisRound = (printModulo % (32*8))==0;
+  bool printThisRound = (printModulo % (32*32))==0;
   readPilotVoltages(printThisRound);
   pilotVoltageRange = convertPilotVoltageToRange();
   if (printThisRound) {
@@ -355,24 +361,78 @@ void runWbStateMachine(void) {
   }
   switch (wallbox_state) {
    case WB_STATE_A: /* standby */
-     if (checkTransition_A_B()) enterState_B();
-     if (checkTransition_A_ERR()) enterState_ERR();
+     if (checkTransition_A_B()) {
+         Serial.println("Transition A->B");
+         printPilotVoltages();
+         printPilotRange(pilotVoltageRange);
+
+         enterState_B();
+     }
+     if (checkTransition_A_ERR()) {
+         Serial.println("Transition A->ERR");
+         printPilotVoltages();
+         printPilotRange(pilotVoltageRange);
+
+         enterState_ERR();
+     }
      /* Wir erlauben hier explizit NICHT den direkten Übergang zu "C ready/charging", sonst könnte man mit bloßem Anlegen eines
       *  Widerstands die Spannung einschalten.
       */
      break;
    case WB_STATE_B: /* vehicle detected */
-     if (checkTransition_B_C()) enterState_C();
-     if (checkTransition_BC_ERR()) enterState_ERR();
-     if (checkTransition_BC_A()) enterState_A();
+     if (checkTransition_B_C()) {
+         Serial.println("Transition B->C");
+         printPilotVoltages();
+         printPilotRange(pilotVoltageRange);
+
+         enterState_C();
+     }
+     if (checkTransition_BC_ERR()) {
+         Serial.println("Transition B->ERR");
+         printPilotVoltages();
+         printPilotRange(pilotVoltageRange);
+
+         enterState_ERR();
+     }
+     if (checkTransition_BC_A()) {
+         Serial.println("Transition B->A");
+         printPilotVoltages();
+         printPilotRange(pilotVoltageRange);
+
+         enterState_A();
+     }
      break;
    case WB_STATE_C: /* ready / charging */
-     if (checkTransition_C_B()) enterState_B();
-     if (checkTransition_BC_A()) enterState_A();
-     if (checkTransition_BC_ERR()) enterState_ERR();
+     if (checkTransition_C_B()) {
+         Serial.println("Transition C->B");
+         printPilotVoltages();
+         printPilotRange(pilotVoltageRange);
+
+         enterState_B();
+     }
+     if (checkTransition_BC_A()) {
+         Serial.println("Transition C->A");
+         printPilotVoltages();
+         printPilotRange(pilotVoltageRange);
+
+         enterState_A();
+     }
+     if (checkTransition_BC_ERR()) {
+         Serial.println("Transition C->ERR");
+         printPilotVoltages();
+         printPilotRange(pilotVoltageRange);
+
+         enterState_ERR();
+     }
      break;
    case WB_STATE_ERR: /* Fehler */
-     if (checkTransition_ERR_A()) enterState_A();   
+     if (checkTransition_ERR_A()) {
+         Serial.println("Transition ERR->A");
+         printPilotVoltages();
+         printPilotRange(pilotVoltageRange);
+
+         enterState_A();   
+     }
      break;
    default:
      enterState_A(); /* Beim Init und falls der Zustand seltsame Werte hat */
