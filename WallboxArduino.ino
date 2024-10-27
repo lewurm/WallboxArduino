@@ -200,8 +200,6 @@ void J1772Pilot::Init()
   /* TODO: is this needed or taken care of by the PWM lib? */
   pinMode(PILOT_PIN, OUTPUT);
 
-  pwm.begin(1000.0f /*Hz*/, 100.0f /*%*/);
- 
   SetState(PILOT_STATE_P12); // turns the pilot on 12V steady state
 }
 
@@ -213,13 +211,18 @@ void J1772Pilot::Init()
 void J1772Pilot::SetState(PILOT_STATE state) {
   /* uno r4 wifi */
   if (state == PILOT_STATE_P12) {
-    pwm.pulse_perc(100.0);
+    pwm.end();
+    digitalWrite(PILOT_PIN, HIGH);
+    isPwmOn = 0;
   } else if (state == PILOT_STATE_PWM) {
-    pwm.pulse_perc(5.0);
+    // digitalWrite(PILOT_PIN, LOW);
+
+    pwm.begin(1000.0f /*Hz*/, 5.0f /*%*/);
+    isPwmOn = 1;
   } else {
-    pwm.pulse_perc(0.0);
+    pwm.suspend();
+    isPwmOn = 0;
   }
-  isPwmOn = 0;
   m_State = state;
 }
 
