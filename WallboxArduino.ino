@@ -128,7 +128,7 @@ void readPilotVoltages(bool printThisRound) {
 
  for (int i=0;i < 100;i++) {
     reading = analogRead(VOLT_PIN);  // measures pilot voltage
-    if (i == 10 && printThisRound) {
+    if (0 && i == 10 && printThisRound) {
       Serial.print("  reading(");
       Serial.print(i);
       Serial.print(")=");
@@ -361,9 +361,12 @@ void enterState_ERR(void) {
 void runWbStateMachine(void) {
   printModulo++;
   bool printThisRound = (printModulo % (32*32))==0;
+  long int t1 = millis();
   readPilotVoltages(printThisRound);
+  long int t2 = millis();
   pilotVoltageRange = convertPilotVoltageToRange();
   if (printThisRound) {
+     Serial.print("readPilotVoltages took "); Serial.print(t2 - t1); Serial.print(" ms (it is assumed to be 12ms)");
      printPilotVoltages();
      printPilotRange(pilotVoltageRange);
      Serial.println("");
