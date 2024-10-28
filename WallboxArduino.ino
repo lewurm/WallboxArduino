@@ -113,35 +113,21 @@ J1772Pilot m_Pilot;
 uint8_t pilotVoltageRange;
 
 
-int16_t uPilotHigh_mV;
-int16_t uPilotLow_mV;
+int16_t uPilotHigh_mV, uPilotLow_mV;
+int16_t uPilotHigh_raw, uPilotLow_raw;
 uint8_t isPwmOn=0;
 
-void readPilotVoltages(bool printThisRound) {
- int16_t reading;
+void readPilotVoltages() {
+ int16_t reading, orig_reading;
  uPilotLow_mV = 32000;
  uPilotHigh_mV = -32000;
  digitalWrite(DEBUG_PIN,HIGH);
 
- // TODO: tweak measurement loops?
+ // r1: 1x = 114us 20x = 2.3ms 100x = 11.3ms
+ // r4: 1x = 21us -> 500x = ~10.5ms
 
- for (int i=0;i < 5*100;i++) {
-    reading = analogRead(VOLT_PIN);  // measures pilot voltage
-    if (i == 10 && printThisRound) {
-      Serial.print("  reading(");
-      Serial.print(i);
-      Serial.print(")=");
-      Serial.println(  reading);
-
-      // TODO: measure -12V (!), 0V, 3V, 6V, 9V and +12V
-
-      // 472 -> 0V
-      // 632 -> 5.43V
-      // 691 -> 7.23V
-      // 743 -> 9V
-      // 790 -> nix (11.08V?)
-      // 853 -> 13.38V
-    }
+ for (int i=0; i < 500; i++) {
+    orig_reading = analogRead(VOLT_PIN);  // measures pilot voltage
     /* tuned for:
         CP       v
                  |
@@ -153,15 +139,17 @@ void readPilotVoltages(bool printThisRound) {
                  |
        GND       v
     */
-    reading -= 472; /* entspricht 0V am ControlPilot */
+    reading = orig_reading - 472; /* entspricht 0V am ControlPilot */
     reading *= 33; /* auf Millivolt skalieren */
     if (reading > uPilotHigh_mV) {
         uPilotHigh_mV = reading;
-      }
-      else if (reading < uPilotLow_mV) {
-        uPilotLow_mV = reading;
-      }
+        uPilotHigh_raw = orig_reading;
     }
+    if (reading < uPilotLow_mV) {
+        uPilotLow_mV = reading;
+        uPilotLow_raw = orig_reading;
+    }
+ }
  digitalWrite(DEBUG_PIN,LOW);   
 }
 #define PILOT_RANGE_A 1
@@ -179,12 +167,8 @@ uint8_t convertPilotVoltageToRange(void) {
     rc= PILOT_RANGE_A; /* 12V, not connected */
   } else if ((uPilotHigh_mV>=7000) and (uPilotHigh_mV<=10500)) {
     rc= PILOT_RANGE_B; /* 9V, vehicle detected */
-
-    // TODO: verify, uPilotLow_mV should be -12V
   } else if ((uPilotHigh_mV>=4000) and (uPilotHigh_mV<=7500)) {
     rc= PILOT_RANGE_C; /* 6V, ready, charging */
-
-    // TODO: verify, uPilotLow_mV should be -12V
   } else {
     rc= PILOT_RANGE_ERROR; /* Defekt */
   }
@@ -220,22 +204,21 @@ void J1772Pilot::Init()
 // PILOT_STATE_N12 = steady -12V (EVSE_STATE_F - FAULT) 
 void J1772Pilot::SetState(PILOT_STATE state) {
   /* uno r4 wifi */
+  isPwmOn = 0;
   if (state == PILOT_STATE_P12) {
     pwm.pulse_perc(100.0);
   } else if (state == PILOT_STATE_PWM) {
     pwm.pulse_perc(5.0);
+    isPwmOn = 1;
   } else {
     pwm.pulse_perc(0.0);
   }
-  isPwmOn = 0;
   m_State = state;
 }
 
 void printPilotVoltages(void) {
-  Serial.print(F("Pilot Voltages high="));
-  Serial.print(  uPilotHigh_mV);
-  Serial.print("  low=");
-  Serial.println(  uPilotLow_mV);
+  Serial.print(F("Pilot Voltages high=")); Serial.print(  uPilotHigh_mV); Serial.print("  low="); Serial.println(  uPilotLow_mV);
+  Serial.print(F("Pilot raw high=")); Serial.print(  uPilotHigh_raw); Serial.print("  low="); Serial.println(  uPilotLow_raw);
 }
 
 /*********************************************************************************************************/
@@ -346,26 +329,21 @@ void enterState_ERR(void) {
    *  Zustand erreicht sein.
    */
 
-#if 1
   m_Pilot.SetState(PILOT_STATE_P12);  /* +12V */
-#else
-  /* HACK because voltage drops significantly :-/ */
-  m_Pilot.SetState(PILOT_STATE_PWM);  
-#endif
   resetAllTimers();
   wallbox_state = WB_STATE_ERR;
 }
 
 
 void runWbStateMachine(void) {
+  bool printThisRound = (printModulo % (3*32))==0;
   printModulo++;
-  bool printThisRound = (printModulo % (32*32))==0;
   long int t1 = millis();
-  readPilotVoltages(printThisRound);
+  readPilotVoltages();
   long int t2 = millis();
   pilotVoltageRange = convertPilotVoltageToRange();
   if (printThisRound) {
-     Serial.print("readPilotVoltages took "); Serial.print(t2 - t1); Serial.println(" ms (it is assumed to be 12ms)");
+     Serial.print("readPilotVoltages took "); Serial.print(t2 - t1); Serial.println(" ms (it is assumed to be 11ms)");
      printPilotVoltages();
      printPilotRange(pilotVoltageRange);
      Serial.println("");
@@ -403,7 +381,14 @@ void runWbStateMachine(void) {
          printPilotVoltages();
          printPilotRange(pilotVoltageRange);
 
+#if 1
          enterState_ERR();
+#else
+        // HAX
+         while(1) {
+             1 + 1;
+         }
+#endif
      }
      if (checkTransition_BC_A()) {
          Serial.println("Transition B->A");
@@ -448,7 +433,7 @@ void runWbStateMachine(void) {
    default:
      enterState_A(); /* Beim Init und falls der Zustand seltsame Werte hat */
   }
-  delay(MAIN_LOOP_CYCLE_TIME_MS-12); /* 12 ms are needed for the ADC-multi-read-loop */
+  delay(MAIN_LOOP_CYCLE_TIME_MS - 11); /* 11 ms are needed for the ADC-multi-read-loop */
 }
 
 /*********************************************************************************************************/
@@ -460,6 +445,9 @@ void setup() {
 
   pinMode(CHARGING_PIN, OUTPUT);
   pinMode(DEBUG_PIN, OUTPUT);
+
+  analogReference(AR_DEFAULT);
+
   digitalWrite(CHARGING_PIN, LOW);
   m_Pilot.Init(); // init the pilot
 
