@@ -160,12 +160,12 @@ void readPilotVoltages() {
 
 uint8_t convertPilotVoltageToRange(void) {
   uint8_t rc;
-  if (isPwmOn && ((uPilotLow_mV>-10000) || (uPilotLow_mV<-13500))) {
+  if (isPwmOn && ((uPilotLow_mV>-9400) || (uPilotLow_mV<-13500))) {
     /* Bei PWM sollten wir -12V sehen, sonst ist etwas faul */
     rc = PILOT_RANGE_ERROR_DIODE_CHECK;
   } else if ((uPilotHigh_mV>=10000) and (uPilotHigh_mV<=13500)) {
     rc= PILOT_RANGE_A; /* 12V, not connected */
-  } else if ((uPilotHigh_mV>=7000) and (uPilotHigh_mV<=10500)) {
+  } else if ((uPilotHigh_mV>=7500) and (uPilotHigh_mV<=10500)) {
     rc= PILOT_RANGE_B; /* 9V, vehicle detected */
   } else if ((uPilotHigh_mV>=4000) and (uPilotHigh_mV<=7500)) {
     rc= PILOT_RANGE_C; /* 6V, ready, charging */
@@ -208,7 +208,7 @@ void J1772Pilot::SetState(PILOT_STATE state) {
   if (state == PILOT_STATE_P12) {
     pwm.pulse_perc(100.0);
   } else if (state == PILOT_STATE_PWM) {
-    pwm.pulse_perc(5.0);
+    pwm.pulse_perc(7.0);
     isPwmOn = 1;
   } else {
     pwm.pulse_perc(0.0);
