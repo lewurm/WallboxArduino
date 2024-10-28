@@ -122,13 +122,12 @@ void readPilotVoltages(bool printThisRound) {
  uPilotLow_mV = 32000;
  uPilotHigh_mV = -32000;
  digitalWrite(DEBUG_PIN,HIGH);
- // 1x = 114us 20x = 2.3ms 100x = 11.3ms
 
  // TODO: tweak measurement loops?
 
- for (int i=0;i < 100;i++) {
+ for (int i=0;i < 5*100;i++) {
     reading = analogRead(VOLT_PIN);  // measures pilot voltage
-    if (0 && i == 10 && printThisRound) {
+    if (i == 10 && printThisRound) {
       Serial.print("  reading(");
       Serial.print(i);
       Serial.print(")=");
@@ -366,7 +365,7 @@ void runWbStateMachine(void) {
   long int t2 = millis();
   pilotVoltageRange = convertPilotVoltageToRange();
   if (printThisRound) {
-     Serial.print("readPilotVoltages took "); Serial.print(t2 - t1); Serial.print(" ms (it is assumed to be 12ms)");
+     Serial.print("readPilotVoltages took "); Serial.print(t2 - t1); Serial.println(" ms (it is assumed to be 12ms)");
      printPilotVoltages();
      printPilotRange(pilotVoltageRange);
      Serial.println("");
