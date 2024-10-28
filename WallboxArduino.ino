@@ -208,7 +208,7 @@ void J1772Pilot::SetState(PILOT_STATE state) {
   if (state == PILOT_STATE_P12) {
     pwm.pulse_perc(100.0);
   } else if (state == PILOT_STATE_PWM) {
-    pwm.pulse_perc(7.0);
+    pwm.pulse_perc(5.0);
     isPwmOn = 1;
   } else {
     pwm.pulse_perc(0.0);
