@@ -208,7 +208,7 @@ void J1772Pilot::SetState(PILOT_STATE state) {
   if (state == PILOT_STATE_P12) {
     pwm.pulse_perc(100.0);
   } else if (state == PILOT_STATE_PWM) {
-    pwm.pulse_perc(5.0);
+    pwm.pulse_perc(11.5);
     isPwmOn = 1;
   } else {
     pwm.pulse_perc(0.0);
@@ -381,13 +381,11 @@ void runWbStateMachine(void) {
          printPilotVoltages();
          printPilotRange(pilotVoltageRange);
 
-#if 1
+#if 0
          enterState_ERR();
 #else
-        // HAX
-         while(1) {
-             1 + 1;
-         }
+         // HAX
+         delay(100);
 #endif
      }
      if (checkTransition_BC_A()) {
